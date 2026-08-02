@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OIPulse Strength Alert — Options</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <h1>OIPulse Strength Alert</h1>
+      <p class="lead">Configure alerts and summarization providers.</p>
+
+      <form id="settingsForm">
+        <section>
+          <h2>Alerts</h2>
+          <label>
+            Strength high threshold (%)
+            <input type="number" id="strengthHigh" step="1" />
+          </label>
+          <label>
+            Strength low threshold (%)
+            <input type="number" id="strengthLow" step="1" />
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="monitoringEnabled" />
+            Enable 3-minute monitoring (reload + scrape)
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="alertsEnabled" />
+            Trigger alert every 3 minutes while Strength is outside thresholds
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="autoOpenTab" />
+            Auto-open Trending OI tab if missing
+          </label>
+          <label class="checkbox">
+            <input type="checkbox" id="alertSoundEnabled" />
+            Play alert sound on Strength breach
+          </label>
+          <button type="button" id="testSoundBtn" class="secondary inline">Test alert sound</button>
+        </section>
+
+        <section>
+          <h2>JSON export</h2>
+          <p class="hint">
+            Scraped rows are stored in <code>chrome.storage.local</code> (browser profile memory),
+            not as a file in this project. Use <strong>Download JSON</strong> in the popup, or enable
+            auto-download below (saves to your Downloads folder).
+          </p>
+          <label class="checkbox">
+            <input type="checkbox" id="autoDownloadJson" />
+            Auto-download JSON after each successful scrape
+          </label>
+        </section>
+
+        <section>
+          <h2>Summarization provider</h2>
+          <div class="radios">
+            <label class="checkbox">
+              <input type="radio" name="llmProvider" value="mlx" />
+              MLX (local, Apple Silicon, default)
+            </label>
+            <label class="checkbox">
+              <input type="radio" name="llmProvider" value="ollama" />
+              Ollama (local)
+            </label>
+            <label class="checkbox">
+              <input type="radio" name="llmProvider" value="openai" />
+              OpenAI
+            </label>
+          </div>
+
+          <div id="mlxFields" class="provider-fields">
+            <label>
+              MLX server URL
+              <input type="url" id="mlxUrl" placeholder="http://localhost:8080" />
+            </label>
+            <label>
+              MLX model
+              <input type="text" id="mlxModel" placeholder="mlx-community/Qwen3-14B-4bit" />
+            </label>
+            <label class="checkbox">
+              <input type="checkbox" id="mlxReasoning" />
+              Enable Qwen3 reasoning (/think) — slower, usually better analysis
+            </label>
+            <p class="hint">
+              Start the local MLX server (OpenAI-compatible) with the exact command below,
+              then click <strong>Test connection</strong>:
+            </p>
+            <pre id="mlxCommand" class="command"></pre>
+            <p class="hint">
+              Accuracy tips (16 GB M1): keep <code>Qwen3-14B-4bit</code>, enable reasoning,
+              use lower temp. For higher fidelity try <code>Qwen3-14B-6bit</code> if RAM allows.
+            </p>
+          </div>
+
+          <div id="ollamaFields" class="provider-fields">
+            <label>
+              Ollama URL
+              <input type="url" id="ollamaUrl" placeholder="http://localhost:11434" />
+            </label>
+            <label>
+              Ollama model
+              <input type="text" id="ollamaModel" placeholder="qwen3:8b" />
+            </label>
+            <p class="hint">
+              If you see <code>403 Forbidden</code>, quit the Ollama menu-bar app, then start it from a
+              terminal with your extension origin allowed:
+            </p>
+            <pre id="ollamaCommand" class="command"></pre>
+            <p class="hint">Extension ID: <code id="extensionId">…</code></p>
+          </div>
+
+          <div id="openaiFields" class="provider-fields">
+            <label>
+              OpenAI API key
+              <input type="password" id="openaiApiKey" autocomplete="off" placeholder="sk-..." />
+            </label>
+            <label>
+              OpenAI model
+              <input type="text" id="openaiModel" placeholder="gpt-4o-mini" />
+            </label>
+            <p class="hint">Key is stored only in local Chrome storage on this device.</p>
+          </div>
+        </section>
+
+        <div class="actions">
+          <button type="submit">Save settings</button>
+          <button type="button" id="testBtn" class="secondary">Test connection</button>
+        </div>
+        <p id="optionsStatus" class="status"></p>
+      </form>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>
