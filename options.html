@@ -9,7 +9,10 @@
   <body>
     <main>
       <h1>OIPulse Strength Alert</h1>
-      <p class="lead">Configure alerts and summarization providers.</p>
+      <p class="lead">
+        Default analysis path is Cursor hybrid: scrape JSON → Cursor chat → Load analysis.
+        In-extension LLM providers are optional (advanced).
+      </p>
 
       <form id="settingsForm">
         <section>
@@ -42,11 +45,12 @@
         </section>
 
         <section>
-          <h2>JSON export</h2>
+          <h2>Cursor hybrid export</h2>
           <p class="hint">
-            Scraped rows are stored in <code>chrome.storage.local</code> (browser profile memory),
-            not as a file in this project. Use <strong>Download JSON</strong> in the popup, or enable
-            auto-download below (saves to your Downloads folder).
+            JSON is written to <code>Downloads/oipulse-data/snapshots/</code>. Symlink that folder to
+            repo <code>data/snapshots/</code> so Cursor can <code>@</code>-mention files. See
+            <code>data/CURSOR_WORKFLOW.md</code>. Analysis markdown is loaded via the popup
+            <strong>Load analysis</strong> button (not auto-read from disk).
           </p>
           <label class="checkbox">
             <input type="checkbox" id="autoDownloadJson" />
@@ -55,73 +59,110 @@
         </section>
 
         <section>
-          <h2>Summarization provider</h2>
-          <div class="radios">
-            <label class="checkbox">
-              <input type="radio" name="llmProvider" value="mlx" />
-              MLX (local, Apple Silicon, default)
-            </label>
-            <label class="checkbox">
-              <input type="radio" name="llmProvider" value="ollama" />
-              Ollama (local)
-            </label>
-            <label class="checkbox">
-              <input type="radio" name="llmProvider" value="openai" />
-              OpenAI
-            </label>
-          </div>
+          <h2>Advanced — in-extension LLM</h2>
+          <p class="hint">
+            Optional fallback. Default workflow uses Cursor chat. Leave this off unless you want the
+            popup <strong>Summarize with LLM</strong> button.
+          </p>
+          <label class="checkbox">
+            <input type="checkbox" id="enableInExtensionLlm" />
+            Enable in-extension LLM summarization
+          </label>
 
-          <div id="mlxFields" class="provider-fields">
-            <label>
-              MLX server URL
-              <input type="url" id="mlxUrl" placeholder="http://localhost:8080" />
-            </label>
-            <label>
-              MLX model
-              <input type="text" id="mlxModel" placeholder="mlx-community/Qwen3-14B-4bit" />
-            </label>
-            <label class="checkbox">
-              <input type="checkbox" id="mlxReasoning" />
-              Enable Qwen3 reasoning (/think) — slower, usually better analysis
-            </label>
-            <p class="hint">
-              Start the local MLX server (OpenAI-compatible) with the exact command below,
-              then click <strong>Test connection</strong>:
-            </p>
-            <pre id="mlxCommand" class="command"></pre>
-            <p class="hint">
-              Accuracy tips (16 GB M1): keep <code>Qwen3-14B-4bit</code>, enable reasoning,
-              use lower temp. For higher fidelity try <code>Qwen3-14B-6bit</code> if RAM allows.
-            </p>
-          </div>
+          <div id="llmAdvancedFields">
+            <div class="radios">
+              <label class="checkbox">
+                <input type="radio" name="llmProvider" value="mlx" />
+                MLX (local, Apple Silicon)
+              </label>
+              <label class="checkbox">
+                <input type="radio" name="llmProvider" value="ollama" />
+                Ollama (local)
+              </label>
+              <label class="checkbox">
+                <input type="radio" name="llmProvider" value="openai" />
+                OpenAI
+              </label>
+              <label class="checkbox">
+                <input type="radio" name="llmProvider" value="deepseek" />
+                DeepSeek
+              </label>
+            </div>
 
-          <div id="ollamaFields" class="provider-fields">
-            <label>
-              Ollama URL
-              <input type="url" id="ollamaUrl" placeholder="http://localhost:11434" />
-            </label>
-            <label>
-              Ollama model
-              <input type="text" id="ollamaModel" placeholder="qwen3:8b" />
-            </label>
-            <p class="hint">
-              If you see <code>403 Forbidden</code>, quit the Ollama menu-bar app, then start it from a
-              terminal with your extension origin allowed:
-            </p>
-            <pre id="ollamaCommand" class="command"></pre>
-            <p class="hint">Extension ID: <code id="extensionId">…</code></p>
-          </div>
+            <div id="mlxFields" class="provider-fields">
+              <label>
+                MLX server URL
+                <input type="url" id="mlxUrl" placeholder="http://localhost:8080" />
+              </label>
+              <label>
+                MLX model
+                <input type="text" id="mlxModel" placeholder="mlx-community/Qwen3-14B-4bit" />
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" id="mlxReasoning" />
+                Enable Qwen3 reasoning (/think) — slower, usually better analysis
+              </label>
+              <p class="hint">
+                Start the local MLX server (OpenAI-compatible) with the exact command below,
+                then click <strong>Test connection</strong>:
+              </p>
+              <pre id="mlxCommand" class="command"></pre>
+              <p class="hint">
+                Accuracy tips (16 GB M1): keep <code>Qwen3-14B-4bit</code>, enable reasoning,
+                use lower temp. For higher fidelity try <code>Qwen3-14B-6bit</code> if RAM allows.
+              </p>
+            </div>
 
-          <div id="openaiFields" class="provider-fields">
-            <label>
-              OpenAI API key
-              <input type="password" id="openaiApiKey" autocomplete="off" placeholder="sk-..." />
-            </label>
-            <label>
-              OpenAI model
-              <input type="text" id="openaiModel" placeholder="gpt-4o-mini" />
-            </label>
-            <p class="hint">Key is stored only in local Chrome storage on this device.</p>
+            <div id="ollamaFields" class="provider-fields">
+              <label>
+                Ollama URL
+                <input type="url" id="ollamaUrl" placeholder="http://localhost:11434" />
+              </label>
+              <label>
+                Ollama model
+                <input type="text" id="ollamaModel" placeholder="qwen3:8b" />
+              </label>
+              <p class="hint">
+                If you see <code>403 Forbidden</code>, quit the Ollama menu-bar app, then start it from a
+                terminal with your extension origin allowed:
+              </p>
+              <pre id="ollamaCommand" class="command"></pre>
+              <p class="hint">Extension ID: <code id="extensionId">…</code></p>
+            </div>
+
+            <div id="openaiFields" class="provider-fields">
+              <label>
+                OpenAI API key
+                <input type="password" id="openaiApiKey" autocomplete="off" placeholder="sk-..." />
+              </label>
+              <label>
+                OpenAI model
+                <input type="text" id="openaiModel" placeholder="gpt-4o-mini" />
+              </label>
+              <p class="hint">Key is stored only in local Chrome storage on this device.</p>
+            </div>
+
+            <div id="deepseekFields" class="provider-fields">
+              <label>
+                DeepSeek API key
+                <input type="password" id="deepseekApiKey" autocomplete="off" placeholder="sk-..." />
+              </label>
+              <label>
+                DeepSeek model
+                <input type="text" id="deepseekModel" placeholder="deepseek-v4-flash" />
+              </label>
+              <label class="checkbox">
+                <input type="checkbox" id="deepseekThinking" />
+                Enable thinking mode — slower, usually better analysis
+              </label>
+              <p class="hint">
+                Get a key at
+                <a href="https://platform.deepseek.com/api_keys" target="_blank" rel="noopener"
+                  >platform.deepseek.com</a
+                >. Key is stored only in local Chrome storage on this device. Default model:
+                <code>deepseek-v4-flash</code>.
+              </p>
+            </div>
           </div>
         </section>
 

@@ -1,5 +1,11 @@
 import { buildSummaryPrompt } from "./lib/summarize.js";
-import { summarizeWithProvider, testOllama, testOpenAI, testMLX } from "./lib/llm.js";
+import {
+  summarizeWithProvider,
+  testOllama,
+  testOpenAI,
+  testMLX,
+  testDeepSeek
+} from "./lib/llm.js";
 
 const ALARM_NAME = "oiCheck";
 const TRENDING_OI_URL = "https://oipulse.com/app/options-analysis/trending-oi";
@@ -17,14 +23,20 @@ const DEFAULT_SETTINGS = {
   mlxReasoning: true,
   openaiApiKey: "",
   openaiModel: "gpt-4o-mini",
+  deepseekApiKey: "",
+  deepseekModel: "deepseek-v4-flash",
+  deepseekThinking: true,
   strengthHigh: 40,
   strengthLow: -40,
   monitoringEnabled: true,
   alertsEnabled: true,
   autoOpenTab: false,
   alertSoundEnabled: true,
-  autoDownloadJson: false
+  autoDownloadJson: true,
+  enableInExtensionLlm: false
 };
+
+const SNAPSHOT_DOWNLOAD_DIR = "oipulse-data/snapshots";
 
 async function getSettings() {
   const stored = await chrome.storage.local.get(Object.keys(DEFAULT_SETTINGS));
@@ -179,7 +191,7 @@ function toBase64Utf8(text) {
   return btoa(binary);
 }
 
-async function downloadJson(rows, scrapedAt, { saveAs = true } = {}) {
+async function downloadJson(rows, scrapedAt, { saveAs = false } = {}) {
   if (!rows?.length) {
     return { ok: false, error: "No scraped rows to download." };
   }
@@ -193,7 +205,9 @@ async function downloadJson(rows, scrapedAt, { saveAs = true } = {}) {
   // Service workers do not support URL.createObjectURL — use a data URL instead.
   const text = JSON.stringify(payload, null, 2);
   const url = `data:application/json;charset=utf-8;base64,${toBase64Utf8(text)}`;
-  const filename = `oipulse-trending-oi-${stampForFilename(scrapedAt)}.json`;
+  const basename = `oipulse-trending-oi-${stampForFilename(scrapedAt)}.json`;
+  // Lands under ~/Downloads/oipulse-data/snapshots/ (symlink to repo data/snapshots/).
+  const filename = `${SNAPSHOT_DOWNLOAD_DIR}/${basename}`;
 
   try {
     const downloadId = await chrome.downloads.download({
@@ -223,7 +237,7 @@ async function persistSnapshot(result, settings) {
     sentiment: first?.sentiment ?? null,
     rows,
     storageNote:
-      "Rows are stored in chrome.storage.local (not a disk file). Use Download JSON to save a .json file."
+      "Rows are stored in chrome.storage.local. JSON also exports to Downloads/oipulse-data/snapshots/ for the Cursor hybrid workflow."
   };
 
   const { history = [] } = await chrome.storage.local.get(["history"]);
@@ -360,12 +374,67 @@ async function getStatus() {
     lastDownloadFilename: data.lastDownloadFilename || null,
     lastDownloadAt: data.lastDownloadAt || null,
     storageInfo:
-      "Scraped JSON is kept in chrome.storage.local inside the browser profile (not a project folder file). Use Download JSON to export a .json file to your Downloads folder."
+      "Scraped JSON exports to Downloads/oipulse-data/snapshots/ (symlink to repo data/snapshots/). Analyze in Cursor, then Load analysis from data/predictions/latest.md."
   };
+}
+
+async function exportForCursor({ scrapeIfMissing = true } = {}) {
+  let { lastRows, lastSnapshot } = await chrome.storage.local.get(["lastRows", "lastSnapshot"]);
+  let rows = lastRows || lastSnapshot?.rows || [];
+  let scrapedAt = lastSnapshot?.scrapedAt;
+
+  if (!rows.length && scrapeIfMissing) {
+    const scrapeResult = await runCheck({ reload: false });
+    if (!scrapeResult.ok) {
+      return { ok: false, error: scrapeResult.error };
+    }
+    ({ lastRows, lastSnapshot } = await chrome.storage.local.get(["lastRows", "lastSnapshot"]));
+    rows = lastRows || lastSnapshot?.rows || [];
+    scrapedAt = lastSnapshot?.scrapedAt;
+  }
+
+  if (!rows.length) {
+    return { ok: false, error: "No table rows available. Click Scrape now first." };
+  }
+
+  // saveAs:false so Chrome writes under Downloads/oipulse-data/snapshots/ without a dialog.
+  const result = await downloadJson(rows, scrapedAt, { saveAs: false });
+  if (!result.ok) return result;
+  return {
+    ...result,
+    hint: "Saved under Downloads/oipulse-data/snapshots/. If symlinked, open it from data/snapshots/ in Cursor with data/prompt.md."
+  };
+}
+
+async function importSummaryText(text, { filename } = {}) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) {
+    return { ok: false, error: "Analysis file is empty." };
+  }
+  const payload = {
+    text: trimmed,
+    provider: "cursor",
+    model: filename || "latest.md",
+    createdAt: new Date().toISOString(),
+    source: "file-import"
+  };
+  await chrome.storage.local.set({
+    lastSummary: payload,
+    lastError: null
+  });
+  return { ok: true, summary: payload };
 }
 
 async function summarizeTwoHours() {
   const settings = await getSettings();
+  if (!settings.enableInExtensionLlm) {
+    return {
+      ok: false,
+      error:
+        "In-extension LLM is disabled. Export for Cursor, analyze in Cursor chat, then Load analysis. Enable Advanced LLM in Options to use providers here."
+    };
+  }
+
   let { lastRows, history, lastSnapshot } = await chrome.storage.local.get([
     "lastRows",
     "history",
@@ -430,6 +499,10 @@ async function testLlm() {
       const result = await testOpenAI(settings.openaiApiKey);
       return { ok: true, provider: "openai", models: result.models };
     }
+    if (settings.llmProvider === "deepseek") {
+      const result = await testDeepSeek(settings.deepseekApiKey);
+      return { ok: true, provider: "deepseek", models: result.models };
+    }
     if (settings.llmProvider === "mlx") {
       const result = await testMLX(settings.mlxUrl);
       return { ok: true, provider: "mlx", models: result.models };
@@ -492,11 +565,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       case "SUMMARIZE_2H":
         sendResponse(await summarizeTwoHours());
         break;
+      case "EXPORT_FOR_CURSOR":
+        sendResponse(await exportForCursor({ scrapeIfMissing: message.scrapeIfMissing !== false }));
+        break;
+      case "IMPORT_SUMMARY":
+        sendResponse(
+          await importSummaryText(message.text, { filename: message.filename || "latest.md" })
+        );
+        break;
       case "TEST_LLM":
         sendResponse(await testLlm());
         break;
       case "DOWNLOAD_JSON":
-        sendResponse(await exportLastJson({ saveAs: message.saveAs !== false }));
+        sendResponse(await exportLastJson({ saveAs: Boolean(message.saveAs) }));
         break;
       case "TEST_ALERT_SOUND": {
         const settings = await getSettings();

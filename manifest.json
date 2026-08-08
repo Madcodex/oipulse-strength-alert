@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "OIPulse Strength Alert",
-  "version": "1.3.0",
-  "description": "Scrape OIPulse Trending OI, alert on Strength ±40%, and summarize with Ollama or OpenAI.",
+  "version": "1.3.1",
+  "description": "Scrape OIPulse Trending OI, alert on Strength \u00b140%, and summarize with Ollama or OpenAI.",
   "permissions": [
     "storage",
     "alarms",
@@ -17,6 +17,7 @@
     "http://localhost:11434/*",
     "http://localhost:8080/*",
     "https://api.openai.com/*",
+    "https://api.deepseek.com/*",
     "https://fonts.googleapis.com/*",
     "https://fonts.gstatic.com/*"
   ],

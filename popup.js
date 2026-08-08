@@ -10,6 +10,9 @@ const els = {
   scrapedAt: document.getElementById("scrapedAt"),
   rowCount: document.getElementById("rowCount"),
   scrapeBtn: document.getElementById("scrapeBtn"),
+  exportCursorBtn: document.getElementById("exportCursorBtn"),
+  loadAnalysisBtn: document.getElementById("loadAnalysisBtn"),
+  analysisFileInput: document.getElementById("analysisFileInput"),
   summarizeBtn: document.getElementById("summarizeBtn"),
   downloadBtn: document.getElementById("downloadBtn"),
   openTabBtn: document.getElementById("openTabBtn"),
@@ -123,6 +126,12 @@ function renderAlert(status) {
 function decorateInline(html) {
   let out = html;
 
+  // Colour the change arrows used in the phase tables / labels.
+  out = out
+    .replace(/▲/g, '<span class="chg up">▲</span>')
+    .replace(/▼/g, '<span class="chg down">▼</span>')
+    .replace(/(?:➝|→)/g, '<span class="chg flat">➝</span>');
+
   out = out.replace(
     /\b(\d+(?:\.\d+)?%|\d+\.\d+(?:\s*delta)?|[+\-]\d+(?:\.\d+)?%)\b/gi,
     '<span class="num">$1</span>'
@@ -144,20 +153,167 @@ function decorateInline(html) {
   return out;
 }
 
-function calloutClass(title) {
-  const t = title.toLowerCase();
-  if (t.includes("strength") || t.includes("trend")) return "strength";
-  if (t.includes("pcr")) return "pcr";
-  if (t.includes("takeaway") || t.includes("key")) return "takeaway";
-  return "generic";
+/** Escape then apply inline decoration (bold, numbers, arrows, badges). */
+function decorateValue(text) {
+  const escaped = escapeHtml(text).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  return decorateInline(escaped);
 }
 
-function calloutEmoji(title) {
-  const t = title.toLowerCase();
-  if (t.includes("strength") || t.includes("trend")) return "📈";
-  if (t.includes("pcr")) return "📊";
-  if (t.includes("takeaway") || t.includes("key")) return "📌";
-  return "✦";
+function matchPhaseHeader(line) {
+  const cleaned = line
+    .replace(/^#{1,6}\s*/, "")
+    .replace(/^\*+/, "")
+    .replace(/\*+$/, "")
+    .trim();
+  const m = cleaned.match(
+    /^(?:🟥|🟩|🟦|🟨|✦|▪|■|●)?\s*Phase\s+([0-9]+|[IVXLC]+)\b\s*(.*)$/i
+  );
+  if (!m) return null;
+  const time = m[2].replace(/^[|:–—\-\s]+/, "").replace(/\*+$/, "").trim();
+  return { num: m[1], time };
+}
+
+function isTableRow(line) {
+  return line.startsWith("|") && (line.match(/\|/g) || []).length >= 2;
+}
+
+function splitRow(line) {
+  return line
+    .trim()
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((c) => c.trim());
+}
+
+function isSeparatorRow(cells) {
+  return cells.length > 0 && cells.every((c) => /^:?-{2,}:?$/.test(c) || c === "");
+}
+
+function renderTable(rows) {
+  const parsed = rows.map(splitRow).filter((r) => !isSeparatorRow(r));
+  if (!parsed.length) return "";
+
+  const [header, ...body] = parsed;
+  const changeIdx = header.findIndex((h) => /change|chg|δ|delta/i.test(h));
+
+  const thead = `<thead><tr>${header
+    .map((c) => `<th>${decorateValue(c)}</th>`)
+    .join("")}</tr></thead>`;
+
+  const tbody = `<tbody>${body
+    .map((r) => {
+      const cells = r
+        .map((c, i) => {
+          let tone = "";
+          if (/▲/.test(c)) tone = "up";
+          else if (/▼/.test(c)) tone = "down";
+          else if (/➝|→/.test(c)) tone = "flat";
+          const changeCls = i === changeIdx ? "chg-cell " : "";
+          const metricCls = i === 0 ? "metric " : "";
+          const cls = `${metricCls}${changeCls}${tone}`.trim();
+          return `<td${cls ? ` class="${cls}"` : ""}>${decorateValue(c)}</td>`;
+        })
+        .join("");
+      return `<tr>${cells}</tr>`;
+    })
+    .join("")}</tbody>`;
+
+  return `<div class="table-wrap"><table class="phase-table">${thead}${tbody}</table></div>`;
+}
+
+function renderLabeledRow(key, value) {
+  let valHtml;
+  if (/;/.test(value)) {
+    const parts = value
+      .split(/;\s*/)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    valHtml = `<span class="phase-val stacked">${parts
+      .map((p) => `<span class="sub">${decorateValue(p)}</span>`)
+      .join("")}</span>`;
+  } else {
+    valHtml = `<span class="phase-val">${decorateValue(value)}</span>`;
+  }
+  return `<div class="phase-row"><span class="phase-key">${escapeHtml(
+    key
+  )}</span>${valHtml}</div>`;
+}
+
+function renderPhaseBody(lines) {
+  const blocks = [];
+  let listItems = [];
+  let paragraph = [];
+  let tableRows = [];
+
+  const flushList = () => {
+    if (!listItems.length) return;
+    blocks.push(`<ul>${listItems.map((i) => `<li>${i}</li>`).join("")}</ul>`);
+    listItems = [];
+  };
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    blocks.push(`<p>${paragraph.join(" ")}</p>`);
+    paragraph = [];
+  };
+  const flushTable = () => {
+    if (!tableRows.length) return;
+    blocks.push(renderTable(tableRows));
+    tableRows = [];
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (isTableRow(trimmed)) {
+      flushList();
+      flushParagraph();
+      tableRows.push(trimmed);
+      continue;
+    }
+    flushTable();
+
+    if (!trimmed || /^[━─=]{3,}$/.test(trimmed)) {
+      flushList();
+      flushParagraph();
+      continue;
+    }
+
+    const labeled = trimmed.match(/^\*\*(.+?)\*\*\s*(.*)$/);
+    if (labeled) {
+      flushList();
+      flushParagraph();
+      const key = labeled[1].replace(/:$/, "").trim();
+      const value = labeled[2].replace(/^[—:–\-\s]+/, "").trim();
+      if (!value) blocks.push(`<div class="phase-subhead">${escapeHtml(key)}</div>`);
+      else blocks.push(renderLabeledRow(key, value));
+      continue;
+    }
+
+    const bullet = trimmed.match(/^[-*•]\s+(.+)$/) || trimmed.match(/^\d+\.\s+(.+)$/);
+    if (bullet) {
+      flushParagraph();
+      listItems.push(decorateValue(bullet[1]));
+      continue;
+    }
+
+    flushList();
+    paragraph.push(decorateValue(trimmed));
+  }
+
+  flushList();
+  flushParagraph();
+  flushTable();
+  return blocks.join("");
+}
+
+function detectTone(text) {
+  const t = String(text).toLowerCase();
+  const bull = (t.match(/bull/g) || []).length;
+  const bear = (t.match(/bear/g) || []).length;
+  if (bull > bear) return "bullish";
+  if (bear > bull) return "bearish";
+  return "neutral";
 }
 
 function renderMarkdown(raw) {
@@ -166,121 +322,59 @@ function renderMarkdown(raw) {
   }
 
   const lines = String(raw).replace(/\r\n/g, "\n").split("\n");
-  const blocks = [];
-  let listItems = [];
-  let paragraph = [];
-  let callout = null;
-
-  const flushList = () => {
-    if (!listItems.length) return;
-    const items = listItems
-      .map((item) => `<li>${decorateInline(item)}</li>`)
-      .join("");
-    const html = `<ul>${items}</ul>`;
-    if (callout) callout.body.push(html);
-    else blocks.push(html);
-    listItems = [];
-  };
-
-  const flushParagraph = () => {
-    if (!paragraph.length) return;
-    const text = paragraph.join(" ");
-    const html = `<p>${decorateInline(text)}</p>`;
-    if (callout) callout.body.push(html);
-    else blocks.push(html);
-    paragraph = [];
-  };
-
-  const flushCallout = () => {
-    if (!callout) return;
-    flushList();
-    flushParagraph();
-    const cls = calloutClass(callout.title);
-    const emoji = calloutEmoji(callout.title);
-    blocks.push(
-      `<div class="callout ${cls}"><div class="callout-title">${emoji} ${escapeHtml(
-        callout.title
-      )}</div>${callout.body.join("")}</div>`
-    );
-    callout = null;
-  };
+  const phases = [];
+  const intro = [];
+  let current = null;
 
   for (const line of lines) {
-    const trimmed = line.trim();
-
-    if (!trimmed || /^[━─=\-]{3,}$/.test(trimmed)) {
-      flushList();
-      flushParagraph();
+    const header = matchPhaseHeader(line.trim());
+    if (header) {
+      current = { num: header.num, time: header.time, lines: [] };
+      phases.push(current);
       continue;
     }
-
-    const headingMatch =
-      trimmed.match(/^#{1,3}\s+(.+)$/) ||
-      trimmed.match(/^\*\*(.+?)\*\*:?\s*$/) ||
-      trimmed.match(/^(?:📈|📊|📌|✦)\s*(.+)$/) ||
-      trimmed.match(/^([A-Z][\w\s/&-]{2,40})$/);
-
-    const looksLikeHeading =
-      headingMatch &&
-      !trimmed.startsWith("-") &&
-      !trimmed.startsWith("*") &&
-      (trimmed.startsWith("#") ||
-        trimmed.startsWith("**") ||
-        /^(?:📈|📊|📌)/.test(trimmed) ||
-        /^(Strength|PCR|Key Takeaway|Sentiment|OI|Trend|Summary)/i.test(trimmed));
-
-    if (looksLikeHeading) {
-      flushList();
-      flushParagraph();
-      flushCallout();
-      const title = (headingMatch[1] || trimmed)
-        .replace(/^\*\*|\*\*$/g, "")
-        .replace(/:$/, "")
-        .trim();
-      callout = { title, body: [] };
-      continue;
-    }
-
-    const bullet = trimmed.match(/^[-*•]\s+(.+)$/) || trimmed.match(/^\d+\.\s+(.+)$/);
-    if (bullet) {
-      flushParagraph();
-      let item = escapeHtml(bullet[1]);
-      item = item.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-      listItems.push(item);
-      continue;
-    }
-
-    flushList();
-    let text = escapeHtml(trimmed);
-    text = text.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
-    paragraph.push(text);
+    if (current) current.lines.push(line);
+    else intro.push(line);
   }
 
-  flushList();
-  flushParagraph();
-  flushCallout();
-
-  if (!blocks.length) {
-    const fallback = decorateInline(
-      escapeHtml(raw).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/\n/g, "<br>")
-    );
-    return `<p>${fallback}</p>`;
+  if (!phases.length) {
+    const body = renderPhaseBody(lines);
+    return body || `<p>${decorateValue(raw)}</p>`;
   }
 
-  return blocks.join("");
+  let html = "";
+  const introBody = renderPhaseBody(intro);
+  if (introBody.trim()) html += `<div class="phase-intro">${introBody}</div>`;
+
+  for (const phase of phases) {
+    const tone = detectTone(phase.lines.join(" "));
+    const body = renderPhaseBody(phase.lines);
+    const time = phase.time
+      ? `<span class="phase-time">${escapeHtml(phase.time)}</span>`
+      : "";
+    html += `<section class="phase-card tone-${tone}"><header class="phase-head"><span class="phase-badge"><span class="phase-dot" aria-hidden="true"></span>Phase ${escapeHtml(
+      String(phase.num)
+    )}</span>${time}</header><div class="phase-body">${body}</div></section>`;
+  }
+
+  return html;
 }
 
 function renderSummary(summary) {
   if (!summary?.text) {
-    els.summaryText.innerHTML = `<div class="summary-placeholder"><p>Run <strong>Summarize 2h</strong> to generate a terminal-grade market brief from the latest OI table.</p></div>`;
+    els.summaryText.innerHTML = `<div class="summary-placeholder"><p><strong>Export for Cursor</strong>, analyze with <code>@data/prompt.md</code> + latest snapshot in Cursor chat, then <strong>Load analysis</strong> from <code>data/predictions/latest.md</code>.</p></div>`;
     els.summaryMeta.textContent = "Awaiting data";
     els.summaryMeta.classList.remove("ready");
     return;
   }
 
-  const model = summary.model || summary.provider || "LLM";
+  const model = summary.model || summary.provider || "Cursor";
   const shortModel = String(model).split("/").pop();
-  els.summaryMeta.textContent = `Generated by ${shortModel}`;
+  const label =
+    summary.provider === "cursor" || summary.source === "file-import"
+      ? `Loaded ${shortModel}`
+      : `Generated by ${shortModel}`;
+  els.summaryMeta.textContent = label;
   els.summaryMeta.classList.add("ready");
   els.summaryMeta.title = [summary.provider, summary.model, formatTime(summary.createdAt)]
     .filter(Boolean)
@@ -291,6 +385,7 @@ function renderSummary(summary) {
 function renderStatus(status) {
   const snap = status.lastSnapshot;
   const strength = snap?.strength;
+  const llmEnabled = Boolean(status.settings?.enableInExtensionLlm);
 
   setMonitorUi(status.monitoringEnabled);
   setAlertsUi(status.alertsEnabled !== false);
@@ -307,10 +402,14 @@ function renderStatus(status) {
 
   renderAlert(status);
 
+  if (els.summarizeBtn) {
+    els.summarizeBtn.hidden = !llmEnabled;
+  }
+
   if (status.lastDownloadFilename) {
     els.storageInfo.textContent = `Exported: ${status.lastDownloadFilename}`;
   } else {
-    els.storageInfo.textContent = "Stored in chrome.storage.local";
+    els.storageInfo.textContent = "Hybrid: Downloads/oipulse-data/snapshots/";
   }
 
   renderSummary(status.lastSummary);
@@ -361,7 +460,9 @@ els.scrapeBtn.addEventListener("click", async () => {
     if (!result?.ok) {
       setStatus(result?.error || "Scrape failed.", true);
     } else {
-      setStatus(`Scraped ${result.snapshot.rowCount} rows (saved in chrome.storage.local).`);
+      setStatus(
+        `Scraped ${result.snapshot.rowCount} rows. JSON exports to Downloads/oipulse-data/snapshots/.`
+      );
     }
     await refresh();
   } catch (err) {
@@ -371,9 +472,57 @@ els.scrapeBtn.addEventListener("click", async () => {
   }
 });
 
-els.summarizeBtn.addEventListener("click", async () => {
+els.exportCursorBtn.addEventListener("click", async () => {
+  els.exportCursorBtn.disabled = true;
+  setStatus("Exporting JSON for Cursor…");
+  try {
+    const result = await chrome.runtime.sendMessage({ type: "EXPORT_FOR_CURSOR" });
+    if (!result?.ok) {
+      setStatus(result?.error || "Export failed.", true);
+    } else {
+      setStatus(`Exported ${result.filename}. Analyze in Cursor, then Load analysis.`);
+    }
+    await refresh();
+  } catch (err) {
+    setStatus(err?.message || String(err), true);
+  } finally {
+    els.exportCursorBtn.disabled = false;
+  }
+});
+
+els.loadAnalysisBtn.addEventListener("click", () => {
+  els.analysisFileInput.value = "";
+  els.analysisFileInput.click();
+});
+
+els.analysisFileInput.addEventListener("change", async () => {
+  const file = els.analysisFileInput.files?.[0];
+  if (!file) return;
+  els.loadAnalysisBtn.disabled = true;
+  setStatus(`Loading ${file.name}…`);
+  try {
+    const text = await file.text();
+    const result = await chrome.runtime.sendMessage({
+      type: "IMPORT_SUMMARY",
+      text,
+      filename: file.name
+    });
+    if (!result?.ok) {
+      setStatus(result?.error || "Failed to load analysis.", true);
+    } else {
+      setStatus(`Loaded analysis from ${file.name}.`);
+    }
+    await refresh();
+  } catch (err) {
+    setStatus(err?.message || String(err), true);
+  } finally {
+    els.loadAnalysisBtn.disabled = false;
+  }
+});
+
+els.summarizeBtn?.addEventListener("click", async () => {
   els.summarizeBtn.disabled = true;
-  setStatus("Summarizing 2h dataframe…");
+  setStatus("Summarizing with in-extension LLM…");
   try {
     const result = await chrome.runtime.sendMessage({ type: "SUMMARIZE_2H" });
     if (!result?.ok) {
@@ -393,11 +542,11 @@ els.downloadBtn.addEventListener("click", async () => {
   els.downloadBtn.disabled = true;
   setStatus("Preparing JSON download…");
   try {
-    const result = await chrome.runtime.sendMessage({ type: "DOWNLOAD_JSON", saveAs: true });
+    const result = await chrome.runtime.sendMessage({ type: "DOWNLOAD_JSON", saveAs: false });
     if (!result?.ok) {
       setStatus(result?.error || "Download failed.", true);
     } else {
-      setStatus(`Downloaded ${result.filename} (check your Downloads folder).`);
+      setStatus(`Downloaded ${result.filename}`);
     }
     await refresh();
   } catch (err) {

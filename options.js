@@ -5,6 +5,8 @@ const testSoundBtn = document.getElementById("testSoundBtn");
 const mlxFields = document.getElementById("mlxFields");
 const ollamaFields = document.getElementById("ollamaFields");
 const openaiFields = document.getElementById("openaiFields");
+const deepseekFields = document.getElementById("deepseekFields");
+const llmAdvancedFields = document.getElementById("llmAdvancedFields");
 const ollamaCommand = document.getElementById("ollamaCommand");
 const mlxCommand = document.getElementById("mlxCommand");
 const extensionIdEl = document.getElementById("extensionId");
@@ -17,13 +19,17 @@ const fields = {
   autoOpenTab: document.getElementById("autoOpenTab"),
   alertSoundEnabled: document.getElementById("alertSoundEnabled"),
   autoDownloadJson: document.getElementById("autoDownloadJson"),
+  enableInExtensionLlm: document.getElementById("enableInExtensionLlm"),
   mlxUrl: document.getElementById("mlxUrl"),
   mlxModel: document.getElementById("mlxModel"),
   mlxReasoning: document.getElementById("mlxReasoning"),
   ollamaUrl: document.getElementById("ollamaUrl"),
   ollamaModel: document.getElementById("ollamaModel"),
   openaiApiKey: document.getElementById("openaiApiKey"),
-  openaiModel: document.getElementById("openaiModel")
+  openaiModel: document.getElementById("openaiModel"),
+  deepseekApiKey: document.getElementById("deepseekApiKey"),
+  deepseekModel: document.getElementById("deepseekModel"),
+  deepseekThinking: document.getElementById("deepseekThinking")
 };
 
 function setStatus(message, kind = "") {
@@ -37,11 +43,23 @@ function selectedProvider() {
   return checked?.value || "ollama";
 }
 
+function syncAdvancedLlmUi() {
+  const enabled = Boolean(fields.enableInExtensionLlm.checked);
+  if (llmAdvancedFields) {
+    llmAdvancedFields.style.display = enabled ? "block" : "none";
+  }
+  testBtn.disabled = !enabled;
+  testBtn.title = enabled
+    ? "Test the selected LLM provider"
+    : "Enable in-extension LLM to test providers";
+}
+
 function syncProviderFields() {
   const provider = selectedProvider();
   mlxFields.style.display = provider === "mlx" ? "block" : "none";
   ollamaFields.style.display = provider === "ollama" ? "block" : "none";
   openaiFields.style.display = provider === "openai" ? "block" : "none";
+  deepseekFields.style.display = provider === "deepseek" ? "block" : "none";
 }
 
 function updateOllamaCommand(extensionId) {
@@ -64,6 +82,7 @@ function readFormSettings() {
     autoOpenTab: fields.autoOpenTab.checked,
     alertSoundEnabled: fields.alertSoundEnabled.checked,
     autoDownloadJson: fields.autoDownloadJson.checked,
+    enableInExtensionLlm: fields.enableInExtensionLlm.checked,
     llmProvider: selectedProvider(),
     mlxUrl: fields.mlxUrl.value.trim() || "http://localhost:8080",
     mlxModel: fields.mlxModel.value.trim() || "mlx-community/Qwen3-14B-4bit",
@@ -71,7 +90,10 @@ function readFormSettings() {
     ollamaUrl: fields.ollamaUrl.value.trim() || "http://localhost:11434",
     ollamaModel: fields.ollamaModel.value.trim() || "qwen3:8b",
     openaiApiKey: fields.openaiApiKey.value.trim(),
-    openaiModel: fields.openaiModel.value.trim() || "gpt-4o-mini"
+    openaiModel: fields.openaiModel.value.trim() || "gpt-4o-mini",
+    deepseekApiKey: fields.deepseekApiKey.value.trim(),
+    deepseekModel: fields.deepseekModel.value.trim() || "deepseek-v4-flash",
+    deepseekThinking: fields.deepseekThinking.checked
   };
 }
 
@@ -82,7 +104,8 @@ function fillForm(settings, extensionId) {
   fields.alertsEnabled.checked = settings.alertsEnabled !== false;
   fields.autoOpenTab.checked = Boolean(settings.autoOpenTab);
   fields.alertSoundEnabled.checked = settings.alertSoundEnabled !== false;
-  fields.autoDownloadJson.checked = Boolean(settings.autoDownloadJson);
+  fields.autoDownloadJson.checked = settings.autoDownloadJson !== false;
+  fields.enableInExtensionLlm.checked = Boolean(settings.enableInExtensionLlm);
   fields.mlxUrl.value = settings.mlxUrl || "http://localhost:8080";
   fields.mlxModel.value = settings.mlxModel || "mlx-community/Qwen3-14B-4bit";
   fields.mlxReasoning.checked = settings.mlxReasoning !== false;
@@ -90,11 +113,15 @@ function fillForm(settings, extensionId) {
   fields.ollamaModel.value = settings.ollamaModel || "qwen3:8b";
   fields.openaiApiKey.value = settings.openaiApiKey || "";
   fields.openaiModel.value = settings.openaiModel || "gpt-4o-mini";
+  fields.deepseekApiKey.value = settings.deepseekApiKey || "";
+  fields.deepseekModel.value = settings.deepseekModel || "deepseek-v4-flash";
+  fields.deepseekThinking.checked = settings.deepseekThinking !== false;
 
   const provider = settings.llmProvider || "mlx";
   const radio = form.querySelector(`input[name="llmProvider"][value="${provider}"]`);
   if (radio) radio.checked = true;
   syncProviderFields();
+  syncAdvancedLlmUi();
   updateOllamaCommand(extensionId);
   updateMlxCommand();
 }
@@ -108,6 +135,7 @@ form.querySelectorAll('input[name="llmProvider"]').forEach((input) => {
   input.addEventListener("change", syncProviderFields);
 });
 
+fields.enableInExtensionLlm.addEventListener("change", syncAdvancedLlmUi);
 fields.mlxModel.addEventListener("input", updateMlxCommand);
 
 form.addEventListener("submit", async (event) => {
@@ -124,6 +152,10 @@ form.addEventListener("submit", async (event) => {
 
 testBtn.addEventListener("click", async () => {
   const settings = readFormSettings();
+  if (!settings.enableInExtensionLlm) {
+    setStatus("Enable in-extension LLM first (advanced).", "error");
+    return;
+  }
   await chrome.runtime.sendMessage({ type: "SAVE_SETTINGS", settings });
   setStatus("Testing connection…");
   testBtn.disabled = true;
@@ -141,7 +173,7 @@ testBtn.addEventListener("click", async () => {
   } catch (err) {
     setStatus(err?.message || String(err), "error");
   } finally {
-    testBtn.disabled = false;
+    syncAdvancedLlmUi();
   }
 });
 

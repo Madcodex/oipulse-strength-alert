@@ -6,3 +6,9 @@
 .idea/
 .vscode/
 node_modules/
+
+# Hybrid workflow artifacts (keep folder structure via .gitkeep)
+data/snapshots/*.json
+data/predictions/*.md
+!data/predictions/.gitkeep
+!data/snapshots/.gitkeep
